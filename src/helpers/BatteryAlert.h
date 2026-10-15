@@ -8,14 +8,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+class BatteryAlertSender {
+public:
+  virtual bool queueBatteryAlert(const mesh::GroupChannel& channel, const uint8_t* data, size_t len) = 0;
+};
+
 // Shared low-battery group alert logic for repeater and room server.
 class BatteryAlert {
 public:
-  BatteryAlert(NodePrefs& prefs, mesh::MainBoard& board, mesh::Mesh& mesh,
-               mesh::RTCClock& clock, mesh::PacketManager& manager,
-               CommonCLICallbacks& callbacks, const TransportKey& scope)
-      : _prefs(prefs), _board(board), _mesh(mesh), _clock(clock), _manager(manager),
-        _callbacks(callbacks), _scope(scope) {}
+  BatteryAlert(NodePrefs& prefs, mesh::MainBoard& board, mesh::RTCClock& clock,
+               CommonCLICallbacks& callbacks, BatteryAlertSender& sender)
+      : _prefs(prefs), _board(board), _clock(clock), _callbacks(callbacks), _sender(sender) {}
 
   bool handleCommand(const char* command, char* reply) {
     if (strcmp(command, "get alert") == 0) {
@@ -95,11 +98,9 @@ private:
 
   NodePrefs& _prefs;
   mesh::MainBoard& _board;
-  mesh::Mesh& _mesh;
   mesh::RTCClock& _clock;
-  mesh::PacketManager& _manager;
   CommonCLICallbacks& _callbacks;
-  const TransportKey& _scope;
+  BatteryAlertSender& _sender;
 
   static bool hasKey(const uint8_t key[KEY_SIZE]) {
     for (size_t i = 0; i < KEY_SIZE; ++i) {
@@ -157,24 +158,12 @@ private:
     data[4] = (TXT_TYPE_PLAIN << 2);
     const size_t text_len = snprintf((char*)&data[5], sizeof(data) - 5,
                                      "%s: Battery low: %u mV",
-                                     _prefs.node_name, (unsigned)battery_mv,
-                                     (unsigned)_prefs.battery_alert_threshold_mv);
+                                     _prefs.node_name, (unsigned)battery_mv);
 
     mesh::GroupChannel channel;
     memset(channel.secret, 0, sizeof(channel.secret));
     memcpy(channel.secret, _prefs.battery_alert_channel_key, KEY_SIZE);
     mesh::Utils::sha256(channel.hash, sizeof(channel.hash), channel.secret, KEY_SIZE);
-    mesh::Packet* packet = _mesh.createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel, data, 5 + text_len);
-    if (!packet) return false;
-
-    const int queued = _manager.getOutboundTotal();
-    if (_scope.isNull()) {
-      const uint32_t delay_millis = 0;
-      _mesh.sendFlood(packet, delay_millis, _prefs.path_hash_mode + 1);
-    } else {
-      uint16_t codes[2] = {_scope.calcTransportCode(packet), 0};
-      _mesh.sendFlood(packet, codes, 0, _prefs.path_hash_mode + 1);
-    }
-    return _manager.getOutboundTotal() > queued;
+    return _sender.queueBatteryAlert(channel, data, 5 + text_len);
   }
 };
