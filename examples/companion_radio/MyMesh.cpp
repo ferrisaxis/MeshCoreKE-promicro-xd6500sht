@@ -1,6 +1,7 @@
 #include "MyMesh.h"
 
 #include <Arduino.h> // needed for PlatformIO
+#include <stdlib.h>
 #ifdef ENABLE_WIFI_INTERFACE
 #include <WiFi.h>
 #endif
@@ -993,6 +994,10 @@ void MyMesh::begin() {
   _prefs.tx_power_dbm = constrain(_prefs.tx_power_dbm, -9, MAX_LORA_TX_POWER);
   _prefs.gps_enabled = constrain(_prefs.gps_enabled, 0, 1);  // Ensure boolean 0 or 1
   _prefs.gps_interval = constrain(_prefs.gps_interval, 0, 86400);  // Max 24 hours
+  if (!(_prefs.adc_multiplier >= 0.0f && _prefs.adc_multiplier <= 10.0f)) {
+    _prefs.adc_multiplier = 0.0f;
+  }
+  board.setAdcMultiplier(_prefs.adc_multiplier);
 
   _active_ble_pin = _prefs.ble_pin;
 
@@ -2188,6 +2193,35 @@ bool MyMesh::handleCommand(const char* command, uint32_t sender_timestamp, char*
 
   if (strcmp(command, "ver") == 0) {
     sprintf(reply, "%s (Build: %s)", FIRMWARE_VERSION, FIRMWARE_BUILD_DATE);
+    return true;
+  }
+
+  if (strcmp(command, "get adc.multiplier") == 0) {
+    const float multiplier = board.getAdcMultiplier();
+    if (multiplier == 0.0f) {
+      strcpy(reply, "Error: unsupported");
+    } else {
+      sprintf(reply, "> %.3f", multiplier);
+    }
+    return true;
+  }
+  if (memcmp(command, "set adc.multiplier ", 19) == 0) {
+    const char* value = command + 19;
+    char* end;
+    const float multiplier = strtof(value, &end);
+    if (end == value || *end != 0 || !(multiplier >= 0.0f && multiplier <= 10.0f)) {
+      strcpy(reply, "Error: multiplier must be 0..10");
+    } else if (!board.setAdcMultiplier(multiplier)) {
+      strcpy(reply, "Error: unsupported");
+    } else {
+      _prefs.adc_multiplier = multiplier;
+      savePrefs();
+      if (multiplier == 0.0f) {
+        strcpy(reply, "OK - using default board multiplier");
+      } else {
+        sprintf(reply, "OK - multiplier set to %.3f", multiplier);
+      }
+    }
     return true;
   }
 

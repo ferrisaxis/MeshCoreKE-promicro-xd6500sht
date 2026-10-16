@@ -1,6 +1,6 @@
 # CLI Commands
 
-This document provides an overview of CLI commands that can be sent to MeshCore Repeaters, Room Servers and Sensors.
+This document provides an overview of CLI commands that can be sent to MeshCore Repeaters, Room Servers and Sensors. Some commands are also available on Companions, as noted below.
 
 ## Navigation
 
@@ -426,7 +426,9 @@ This document provides an overview of CLI commands that can be sent to MeshCore 
 
 **Default:** `0.0` (value defined by board)
 
-**Note:** Returns "Error: unsupported by this board" if hardware doesn't support it
+**Note:** Returns "Error: unsupported" if hardware doesn't support it
+
+**Companion v1.18.0.KE:** These commands are also available through Bluetooth CLI. The new value applies immediately and is saved across restarts; `set adc.multiplier 0` restores the board default.
 
 ---
 
