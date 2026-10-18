@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>   // needed for PlatformIO
+#include <string.h>
 #include <Mesh.h>
 #include <helpers/IdentityStore.h>
 
@@ -47,13 +48,19 @@ struct ClientInfo {
 
 class ClientACL {
   FILESYSTEM* _fs;
+  char filename[24];
   ClientInfo clients[MAX_CLIENTS];
   int num_clients;
 
 public:
-  ClientACL() { 
+  ClientACL() {
+    strcpy(filename, "/s_contacts");
     memset(clients, 0, sizeof(clients));
     num_clients = 0;
+  }
+  void setFilename(const char* path) {
+    strncpy(filename, path, sizeof(filename) - 1);
+    filename[sizeof(filename) - 1] = 0;
   }
   void load(FILESYSTEM* _fs, const mesh::LocalIdentity& self_id);
   void save(FILESYSTEM* _fs, bool (*filter)(ClientInfo*)=NULL);

@@ -67,6 +67,44 @@ struct NeighbourInfo {
   int8_t snr; // multiplied by 4, user should divide to get float value
 };
 
+#if defined(WITH_VIRTUAL_ROOMS)
+#define VIRTUAL_ROOM_COUNT 5
+#define ROOM_POST_COUNT 32
+#define ROOM_POST_TEXT_LEN (160 - 9)
+
+struct VirtualRoomConfig {
+  uint8_t enabled;
+  uint8_t allow_read_only;
+  char name[32];
+  char admin_password[16];
+  char guest_password[16];
+};
+
+struct VirtualRoomsConfig {
+  uint32_t magic;
+  uint8_t version;
+  VirtualRoomConfig rooms[VIRTUAL_ROOM_COUNT];
+};
+
+struct VirtualRoomPost {
+  mesh::Identity author;
+  uint32_t timestamp;
+  char text[ROOM_POST_TEXT_LEN + 1];
+};
+
+struct VirtualRoomState {
+  mesh::LocalIdentity id;
+  ClientACL acl;
+  VirtualRoomPost posts[ROOM_POST_COUNT];
+  uint16_t num_posted;
+  uint16_t num_pushes;
+  uint8_t next_post_idx;
+  uint8_t next_client_idx;
+  unsigned long next_push;
+  unsigned long dirty_contacts_expiry;
+};
+#endif
+
 #ifndef FIRMWARE_BUILD_DATE
   #define FIRMWARE_BUILD_DATE   "15 Oct 2026"
 #endif
@@ -112,6 +150,32 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks, public BatteryAlert
   uint8_t pending_sf;
   uint8_t pending_cr;
   int  matching_peer_indexes[MAX_CLIENTS];
+#if defined(WITH_VIRTUAL_ROOMS)
+  VirtualRoomsConfig room_config;
+  VirtualRoomState rooms[VIRTUAL_ROOM_COUNT];
+  uint8_t next_room_push_idx;
+  uint8_t next_room_advert_idx;
+  bool room_advert_flood;
+  unsigned long next_room_advert;
+
+  int roomIndexFor(const mesh::LocalIdentity* id) const;
+  void loadVirtualRooms();
+  bool saveVirtualRoomsConfig();
+  void startRoomAdverts(uint32_t delay_ms, bool flood);
+  void sendRoomAdvert(int room_idx, bool flood, uint32_t delay_ms = 0);
+  void loopVirtualRooms();
+  bool handleVirtualRoomCommand(const char* command, char* reply);
+  void clearRoomRuntime(int room_idx);
+  void storeRoomPost(int room_idx, const mesh::Identity& author, const char* text);
+  uint8_t roomUnsyncedCount(int room_idx, ClientInfo* client);
+  bool roomProcessAck(const uint8_t* ack);
+  void roomPushPost(int room_idx, ClientInfo* client, VirtualRoomPost& post);
+  void roomAnonRecv(int room_idx, mesh::Packet* packet, const uint8_t* secret, const mesh::Identity& sender, uint8_t* data, size_t len);
+  void roomPeerRecv(int room_idx, mesh::Packet* packet, uint8_t type, int sender_idx, const uint8_t* secret, uint8_t* data, size_t len);
+  bool roomPathRecv(int room_idx, mesh::Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len);
+  int roomRequest(int room_idx, ClientInfo* client, uint32_t tag, const uint8_t* request, size_t len);
+  void roomAdminCommand(int room_idx, const char* command, char* reply);
+#endif
 #if defined(WITH_RS232_BRIDGE)
   RS232Bridge bridge;
 #elif defined(WITH_ESPNOW_BRIDGE)
@@ -130,6 +194,12 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks, public BatteryAlert
   bool isLooped(const mesh::Packet* packet, const uint8_t max_counters[]);
 
 protected:
+#if defined(WITH_VIRTUAL_ROOMS)
+  const mesh::LocalIdentity* findLocalIdentity(const uint8_t* hash) const override;
+  bool isLocalIdentity(const mesh::Identity& id) const override;
+  bool isTraceHop(const uint8_t* hash, uint8_t hash_len) const override;
+  void onAckRecv(mesh::Packet* packet, uint32_t ack_crc) override;
+#endif
   float getAirtimeBudgetFactor() const override {
     return _prefs.airtime_factor;
   }
@@ -204,6 +274,7 @@ public:
   void applyTempRadioParams(float freq, float bw, uint8_t sf, uint8_t cr, int timeout_mins) override;
   bool formatFileSystem() override;
   void sendSelfAdvertisement(int delay_millis, bool flood) override;
+  void sendAllAdvertisements(int delay_millis, bool flood);
   void updateAdvertTimer() override;
   void updateFloodAdvertTimer() override;
 

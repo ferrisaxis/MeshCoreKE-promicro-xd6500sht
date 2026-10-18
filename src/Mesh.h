@@ -28,6 +28,7 @@ class Mesh : public Dispatcher {
   RTCClock* _rtc;
   RNG* _rng;
   MeshTables* _tables;
+  const LocalIdentity* receiving_identity = nullptr;
 
   void removeSelfFromPath(Packet* packet);
   void routeDirectRecvAcks(Packet* packet, uint32_t delay_millis);
@@ -36,6 +37,19 @@ class Mesh : public Dispatcher {
 
 protected:
   DispatcherAction onRecvPacket(Packet* pkt) override;
+
+  // Most nodes have only self_id. Multi-service nodes can expose additional
+  // identities without creating a second Dispatcher or radio instance.
+  virtual const LocalIdentity* findLocalIdentity(const uint8_t* hash) const {
+    return self_id.isHashMatch(hash) ? &self_id : nullptr;
+  }
+  virtual bool isLocalIdentity(const Identity& id) const {
+    return self_id.matches(id);
+  }
+  virtual bool isTraceHop(const uint8_t* hash, uint8_t hash_len) const {
+    return self_id.isHashMatch(hash, hash_len);
+  }
+  const LocalIdentity* getReceivingIdentity() const { return receiving_identity; }
 
   virtual uint32_t getCADFailRetryDelay() const override;
 
@@ -184,6 +198,7 @@ public:
 
   Packet* createAdvert(const LocalIdentity& id, const uint8_t* app_data=NULL, size_t app_data_len=0);
   Packet* createDatagram(uint8_t type, const Identity& dest, const uint8_t* secret, const uint8_t* data, size_t len);
+  Packet* createDatagram(const LocalIdentity& sender, uint8_t type, const Identity& dest, const uint8_t* secret, const uint8_t* data, size_t len);
   Packet* createAnonDatagram(uint8_t type, const LocalIdentity& sender, const Identity& dest, const uint8_t* secret, const uint8_t* data, size_t data_len);
   Packet* createGroupDatagram(uint8_t type, const GroupChannel& channel, const uint8_t* data, size_t data_len);
   Packet* createAck(const uint8_t* ack, uint8_t len);
@@ -192,6 +207,7 @@ public:
   Packet* createMultiAck(uint32_t ack_crc, uint8_t remaining) { return createMultiAck((uint8_t *)&ack_crc, 4, remaining); }
   Packet* createPathReturn(const uint8_t* dest_hash, const uint8_t* secret, const uint8_t* path, uint8_t path_len, uint8_t extra_type, const uint8_t*extra, size_t extra_len);
   Packet* createPathReturn(const Identity& dest, const uint8_t* secret, const uint8_t* path, uint8_t path_len, uint8_t extra_type, const uint8_t*extra, size_t extra_len);
+  Packet* createPathReturn(const LocalIdentity& sender, const Identity& dest, const uint8_t* secret, const uint8_t* path, uint8_t path_len, uint8_t extra_type, const uint8_t*extra, size_t extra_len);
   Packet* createRawData(const uint8_t* data, size_t len);
   Packet* createTrace(uint32_t tag, uint32_t auth_code, uint8_t flags = 0);
   Packet* createControlData(const uint8_t* data, size_t len);

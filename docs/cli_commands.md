@@ -14,6 +14,7 @@ This document provides an overview of CLI commands that can be sent to MeshCore 
   - [System](#system)
   - [Routing](#routing)
   - [ACL](#acl)
+  - [Virtual Rooms (ProMicro Repeater)](#virtual-rooms-promicro-repeater)
   - [Region Management](#region-management-v110)
     - [Region Examples](#region-examples)
   - [GPS](#gps-when-gps-support-is-compiled-in)
@@ -764,6 +765,38 @@ The channel name is stored for configuration and display; MeshCore selects and e
 - `state`: `on` (enable) or `off` (disable)
 
 **Default:** `off`
+
+---
+
+### Virtual Rooms (ProMicro Repeater)
+
+The `ProMicro_repeater` build with `WITH_VIRTUAL_ROOMS` provides five independent room-server contacts (`room1` through `room5`) on the same radio as the repeater. All rooms are **off by default**. Each has its own identity, admin and guest passwords, ACL, and in-memory queue of up to 32 posts. Radio settings, repeater forwarding, and advert intervals are shared with the physical repeater. The post queues are cleared on reboot.
+
+Use the **repeater's admin CLI** (USB serial or remote administration through the repeater contact) for these commands. Replace `N` with `1` through `5`:
+
+| Command | Purpose |
+| --- | --- |
+| `get rooms` | List all rooms, names, and enabled states. |
+| `get room.N` | Show one room's state, name, client/post counts, and password/read-only states. |
+| `get room.N.name` / `set room.N.name <name>` | Read or change the room's advertised name. |
+| `set room.N.admin.password <password>` | Set the room's admin password (1–15 characters). Required before enabling it. |
+| `get room.N.guest.password` / `set room.N.guest.password <password>` | Read or change its guest password (1–15 characters). |
+| `get room.N.allow.read.only` / `set room.N.allow.read.only on\|off` | Read or change whether clients without a matching password may enter as read-only guests. |
+| `set room.N on\|off` | Enable or disable the room. Enabling queues a zero-hop room advert. |
+| `get room.N.public.key` | Show the room's public key for its separate contact. |
+| `get room.N.stats` | Show client count and post/push counters. |
+| `get room.N.acl [offset]` | List room ACL entries, two at a time; `offset` defaults to 0. |
+| `room.N.setperm <64-hex-public-key> <0..3>` | Set a room client's role: 0 guest, 1 read-only, 2 read-write, 3 admin. |
+| `room.N.advert` / `room.N.advert.zerohop` | Manually advertise **only this room** by flood or zero-hop. The room must be on. |
+| `room.N.post <text>` | Post a message as the room itself. The room must be on. |
+| `room.N.key.generate` | Generate a new identity for the room; clears its ACL and posts and invalidates the old contact. |
+| `set room.N.prv.key <128-hex-private-key>` | Restore an identity through the repeater admin CLI; also clears the room's ACL and posts. Keep the private key secret. |
+
+For example, prepare and enable the first room with `set room.1.admin.password <password>`, `set room.1.name <name>`, `set room.1.guest.password <password>`, then `set room.1 on`. Use `room.1.advert` if its contact should be announced beyond zero hop.
+
+**Advert timing:** `get/set advert.interval` and `get/set flood.advert.interval` on the repeater control the shared schedule. Each scheduled repeater advert starts a sequence of adverts for enabled rooms, spaced 7 seconds apart. The repeater's manual `advert` announces only the repeater; a room's manual `advert` announces only that room. There are no `get room.advert.interval` or `get room.flood.advert.interval` commands.
+
+**Through an individual room contact:** After logging in as that room's admin, use `get/set name`, `get/set guest.password`, `get/set allow.read.only`, `get public.key`, `get role`, `get repeat`, `get stats`, `get acl [offset]`, `password <new-admin-password>`, `setperm <public-key> <0..3>`, `advert`, `advert.zerohop`, `room.post <text>`, `ver`, `board`, `clock`, and `power`. `get advert.interval` and `get flood.advert.interval` show the shared repeater intervals; changing them requires the repeater contact. Other shared settings (such as `get radio`, `get tx`, `get adc.multiplier`, `get lat`, and `get lon`) can be read through a room contact, but must be changed through the repeater admin CLI. Hardware-dependent queries may report unsupported.
 
 ---
 

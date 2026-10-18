@@ -571,6 +571,13 @@ mesh::DispatcherAction MyMesh::onRecvPacket(mesh::Packet* pkt) {
 
 void MyMesh::onAnonDataRecv(mesh::Packet *packet, const uint8_t *secret, const mesh::Identity &sender,
                             uint8_t *data, size_t len) {
+#if defined(WITH_VIRTUAL_ROOMS)
+  int room_idx = roomIndexFor(getReceivingIdentity());
+  if (room_idx >= 0) {
+    roomAnonRecv(room_idx, packet, secret, sender, data, len);
+    return;
+  }
+#endif
   if (packet->getPayloadType() == PAYLOAD_TYPE_ANON_REQ) { // received an initial request by a possible admin
                                                            // client (unknown at this stage)
     uint32_t timestamp;
@@ -622,6 +629,17 @@ void MyMesh::onAnonDataRecv(mesh::Packet *packet, const uint8_t *secret, const m
 }
 
 int MyMesh::searchPeersByHash(const uint8_t *hash) {
+#if defined(WITH_VIRTUAL_ROOMS)
+  int room_idx = roomIndexFor(getReceivingIdentity());
+  if (room_idx >= 0) {
+    int n = 0;
+    ClientACL& contacts = rooms[room_idx].acl;
+    for (int i = 0; i < contacts.getNumClients(); i++) {
+      if (contacts.getClientByIdx(i)->id.isHashMatch(hash)) matching_peer_indexes[n++] = i;
+    }
+    return n;
+  }
+#endif
   int n = 0;
   for (int i = 0; i < acl.getNumClients(); i++) {
     if (acl.getClientByIdx(i)->id.isHashMatch(hash)) {
@@ -633,6 +651,15 @@ int MyMesh::searchPeersByHash(const uint8_t *hash) {
 
 void MyMesh::getPeerSharedSecret(uint8_t *dest_secret, int peer_idx) {
   int i = matching_peer_indexes[peer_idx];
+#if defined(WITH_VIRTUAL_ROOMS)
+  int room_idx = roomIndexFor(getReceivingIdentity());
+  if (room_idx >= 0) {
+    ClientACL& contacts = rooms[room_idx].acl;
+    if (i >= 0 && i < contacts.getNumClients())
+      memcpy(dest_secret, contacts.getClientByIdx(i)->shared_secret, PUB_KEY_SIZE);
+    return;
+  }
+#endif
   if (i >= 0 && i < acl.getNumClients()) {
     // lookup pre-calculated shared_secret
     memcpy(dest_secret, acl.getClientByIdx(i)->shared_secret, PUB_KEY_SIZE);
@@ -663,6 +690,13 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
 
 void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, const uint8_t *secret,
                             uint8_t *data, size_t len) {
+#if defined(WITH_VIRTUAL_ROOMS)
+  int room_idx = roomIndexFor(getReceivingIdentity());
+  if (room_idx >= 0) {
+    roomPeerRecv(room_idx, packet, type, sender_idx, secret, data, len);
+    return;
+  }
+#endif
   int i = matching_peer_indexes[sender_idx];
   if (i < 0 || i >= acl.getNumClients()) { // get from our known_clients table (sender SHOULD already be known in this context)
     MESH_DEBUG_PRINTLN("onPeerDataRecv: invalid peer idx: %d", i);
@@ -766,6 +800,11 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
 
 bool MyMesh::onPeerPathRecv(mesh::Packet *packet, int sender_idx, const uint8_t *secret, uint8_t *path,
                             uint8_t path_len, uint8_t extra_type, uint8_t *extra, uint8_t extra_len) {
+#if defined(WITH_VIRTUAL_ROOMS)
+  int room_idx = roomIndexFor(getReceivingIdentity());
+  if (room_idx >= 0)
+    return roomPathRecv(room_idx, packet, sender_idx, secret, path, path_len, extra_type, extra, extra_len);
+#endif
   // TODO: prevent replay attacks
   int i = matching_peer_indexes[sender_idx];
 
@@ -942,6 +981,13 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   pending_discover_until = 0;
 
   memset(default_scope.key, 0, sizeof(default_scope.key));
+#if defined(WITH_VIRTUAL_ROOMS)
+  next_room_push_idx = 0;
+  next_room_advert_idx = 0;
+  room_advert_flood = false;
+  next_room_advert = 0;
+  memset(&room_config, 0, sizeof(room_config));
+#endif
 }
 
 void MyMesh::begin(FILESYSTEM *fs) {
@@ -950,6 +996,9 @@ void MyMesh::begin(FILESYSTEM *fs) {
   // load persisted prefs
   _cli.loadPrefs(_fs);
   acl.load(_fs, self_id);
+#if defined(WITH_VIRTUAL_ROOMS)
+  loadVirtualRooms();
+#endif
   // TODO: key_store.begin();
   region_map.load(_fs);
 
@@ -1051,6 +1100,13 @@ void MyMesh::sendSelfAdvertisement(int delay_millis, bool flood) {
   } else {
     MESH_DEBUG_PRINTLN("ERROR: unable to create advertisement packet!");
   }
+}
+
+void MyMesh::sendAllAdvertisements(int delay_millis, bool flood) {
+  sendSelfAdvertisement(delay_millis, flood);
+#if defined(WITH_VIRTUAL_ROOMS)
+  startRoomAdverts(delay_millis, flood);
+#endif
 }
 
 void MyMesh::updateAdvertTimer() {
@@ -1249,6 +1305,9 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
   }
 
   if (_battery_alert.handleCommand(command, reply)) return;
+#if defined(WITH_VIRTUAL_ROOMS)
+  if (handleVirtualRoomCommand(command, reply)) return;
+#endif
 
   // handle ACL related commands
   if (memcmp(command, "setperm ", 8) == 0) {   // format:  setperm {pubkey-hex} {permissions-int8}
@@ -1304,18 +1363,18 @@ void MyMesh::loop() {
 #endif
 
   mesh::Mesh::loop();
+#if defined(WITH_VIRTUAL_ROOMS)
+  loopVirtualRooms();
+#endif
 
   if (next_flood_advert && millisHasNowPassed(next_flood_advert)) {
-    mesh::Packet *pkt = createSelfAdvert();
-    uint32_t delay_millis = 0;
-    if (pkt) sendFloodScoped(default_scope, pkt, delay_millis, _prefs.path_hash_mode + 1);
+    sendAllAdvertisements(0, true);
 
     updateFloodAdvertTimer(); // schedule next flood advert
     updateAdvertTimer();      // also schedule local advert (so they don't overlap)
     _battery_alert.afterAdvert();
   } else if (next_local_advert && millisHasNowPassed(next_local_advert)) {
-    mesh::Packet *pkt = createSelfAdvert();
-    if (pkt) sendZeroHop(pkt);
+    sendAllAdvertisements(0, false);
 
     updateAdvertTimer(); // schedule next local advert
     _battery_alert.afterAdvert();

@@ -14,11 +14,11 @@ static File openWrite(FILESYSTEM* _fs, const char* filename) {
 void ClientACL::load(FILESYSTEM* fs, const mesh::LocalIdentity& self_id) {
   _fs = fs;
   num_clients = 0;
-  if (_fs->exists("/s_contacts")) {
+  if (_fs->exists(filename)) {
   #if defined(RP2040_PLATFORM)
-    File file = _fs->open("/s_contacts", "r");
+    File file = _fs->open(filename, "r");
   #else
-    File file = _fs->open("/s_contacts");
+    File file = _fs->open(filename);
   #endif
     if (file) {
       bool full = false;
@@ -54,7 +54,7 @@ void ClientACL::load(FILESYSTEM* fs, const mesh::LocalIdentity& self_id) {
 
 void ClientACL::save(FILESYSTEM* fs, bool (*filter)(ClientInfo*)) {
   _fs = fs;
-  File file = openWrite(_fs, "/s_contacts");
+  File file = openWrite(_fs, filename);
   if (file) {
     uint8_t unused[2];
     memset(unused, 0, sizeof(unused));
@@ -79,8 +79,8 @@ void ClientACL::save(FILESYSTEM* fs, bool (*filter)(ClientInfo*)) {
 
 bool ClientACL::clear() {
   if (!_fs) return false; // no filesystem, nothing to clear
-  if (_fs->exists("/s_contacts")) {
-    _fs->remove("/s_contacts");
+  if (_fs->exists(filename)) {
+    _fs->remove(filename);
   }
   memset(clients, 0, sizeof(clients));
   num_clients = 0;

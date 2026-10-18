@@ -55,7 +55,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
       uint16_t offset = (uint16_t)pkt->path_len << path_sz;
       if (offset >= len) {   // TRACE has reached end of given path
         onTraceRecv(pkt, trace_tag, auth_code, flags, pkt->path, &pkt->payload[i], len);
-      } else if (self_id.isHashMatch(&pkt->payload[i + offset], 1 << path_sz) && allowPacketForward(pkt) && !_tables->wasSeen(pkt)) {
+      } else if (isTraceHop(&pkt->payload[i + offset], 1 << path_sz) && allowPacketForward(pkt) && !_tables->wasSeen(pkt)) {
         _tables->markSeen(pkt);
         // append SNR (Not hash!)
         pkt->path[pkt->path_len++] = (int8_t) (pkt->getSNR()*4);
@@ -144,7 +144,8 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
         //       For flood mode, the path may not be the 'best' in terms of hops.
         // FUTURE: could send back multiple paths, using createPathReturn(), and let sender choose which to use(?)
 
-        if (self_id.isHashMatch(&dest_hash)) {
+        receiving_identity = findLocalIdentity(&dest_hash);
+        if (receiving_identity) {
           // scan contacts DB, for all matching hashes of 'src_hash' (max 4 matches supported ATM)
           int num = searchPeersByHash(&src_hash);
           // for each matching contact, try to decrypt data
@@ -189,6 +190,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
           } else {
             MESH_DEBUG_PRINTLN("%s recv matches no peers, src_hash=%02X", getLogDateTime(), (uint32_t)src_hash);
           }
+          receiving_identity = nullptr;
         }
         action = routeRecvPacket(pkt);
       }
@@ -204,11 +206,12 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
         MESH_DEBUG_PRINTLN("%s Mesh::onRecvPacket(): incomplete data packet", getLogDateTime());
       } else if (!_tables->wasSeen(pkt)) {
         _tables->markSeen(pkt);
-        if (self_id.isHashMatch(&dest_hash)) {
+        receiving_identity = findLocalIdentity(&dest_hash);
+        if (receiving_identity) {
           Identity sender(sender_pub_key);
 
           uint8_t secret[PUB_KEY_SIZE];
-          self_id.calcSharedSecret(secret, sender);
+          receiving_identity->calcSharedSecret(secret, sender);
 
           // decrypt, checking MAC is valid
           uint8_t data[MAX_PACKET_PAYLOAD];
@@ -217,6 +220,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
             onAnonDataRecv(pkt, secret, sender, data, len);
             pkt->markDoNotRetransmit();
           }
+          receiving_identity = nullptr;
         }
         action = routeRecvPacket(pkt);
       }
@@ -260,7 +264,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
 
       if (i > pkt->payload_len) {
         MESH_DEBUG_PRINTLN("%s Mesh::onRecvPacket(): incomplete advertisement packet", getLogDateTime());
-      } else if (self_id.matches(id.pub_key)) {
+      } else if (isLocalIdentity(id)) {
         MESH_DEBUG_PRINTLN("%s Mesh::onRecvPacket(): receiving SELF advert packet", getLogDateTime());
       } else if (!_tables->wasSeen(pkt)) {
         _tables->markSeen(pkt);
@@ -445,6 +449,16 @@ Packet* Mesh::createPathReturn(const Identity& dest, const uint8_t* secret, cons
   return createPathReturn(dest_hash, secret, path, path_len, extra_type, extra, extra_len);
 }
 
+Packet* Mesh::createPathReturn(const LocalIdentity& sender, const Identity& dest, const uint8_t* secret, const uint8_t* path, uint8_t path_len, uint8_t extra_type, const uint8_t* extra, size_t extra_len) {
+  uint8_t dest_hash[PATH_HASH_SIZE];
+  dest.copyHashTo(dest_hash);
+  const LocalIdentity* previous = receiving_identity;
+  receiving_identity = &sender;
+  Packet* packet = createPathReturn(dest_hash, secret, path, path_len, extra_type, extra, extra_len);
+  receiving_identity = previous;
+  return packet;
+}
+
 Packet* Mesh::createPathReturn(const uint8_t* dest_hash, const uint8_t* secret, const uint8_t* path, uint8_t path_len, uint8_t extra_type, const uint8_t*extra, size_t extra_len) {
   uint8_t path_hash_size = (path_len >> 6) + 1;
   uint8_t path_hash_count = path_len & 63;
@@ -460,7 +474,7 @@ Packet* Mesh::createPathReturn(const uint8_t* dest_hash, const uint8_t* secret, 
 
   int len = 0;
   memcpy(&packet->payload[len], dest_hash, PATH_HASH_SIZE); len += PATH_HASH_SIZE;  // dest hash
-  len += self_id.copyHashTo(&packet->payload[len]);  // src hash
+  len += (receiving_identity ? *receiving_identity : self_id).copyHashTo(&packet->payload[len]);  // src hash
 
   {
     int data_len = 0;
@@ -486,6 +500,10 @@ Packet* Mesh::createPathReturn(const uint8_t* dest_hash, const uint8_t* secret, 
 }
 
 Packet* Mesh::createDatagram(uint8_t type, const Identity& dest, const uint8_t* secret, const uint8_t* data, size_t data_len) {
+  return createDatagram(self_id, type, dest, secret, data, data_len);
+}
+
+Packet* Mesh::createDatagram(const LocalIdentity& sender, uint8_t type, const Identity& dest, const uint8_t* secret, const uint8_t* data, size_t data_len) {
   if (type == PAYLOAD_TYPE_TXT_MSG || type == PAYLOAD_TYPE_REQ || type == PAYLOAD_TYPE_RESPONSE) {
     if (data_len + CIPHER_MAC_SIZE + CIPHER_BLOCK_SIZE-1 > MAX_PACKET_PAYLOAD) return NULL;
   } else {
@@ -501,7 +519,7 @@ Packet* Mesh::createDatagram(uint8_t type, const Identity& dest, const uint8_t* 
 
   int len = 0;
   len += dest.copyHashTo(&packet->payload[len]);  // dest hash
-  len += self_id.copyHashTo(&packet->payload[len]);  // src hash
+  len += sender.copyHashTo(&packet->payload[len]);  // src hash
   len += Utils::encryptThenMAC(secret, &packet->payload[len], data, data_len);
 
   packet->payload_len = len;

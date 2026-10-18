@@ -116,7 +116,7 @@ void setup() {
 
   // send out initial zero hop Advertisement to the mesh
 #if ENABLE_ADVERT_ON_BOOT == 1
-  the_mesh.sendSelfAdvertisement(16000, false);
+  the_mesh.sendAllAdvertisements(16000, false);
 #endif
 
   board.onBootComplete();

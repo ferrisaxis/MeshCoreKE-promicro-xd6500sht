@@ -58,7 +58,7 @@ bool IdentityStore::save(const char *name, const mesh::LocalIdentity& id) {
     bool success = id.writeTo(file);
     file.close();
     MESH_DEBUG_PRINTLN("IdentityStore::save() write - %s", success ? "OK" : "Err");
-    return true;
+    return success;
   }
   MESH_DEBUG_PRINTLN("IdentityStore::save() failed");
   return false;
